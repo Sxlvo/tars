@@ -1,203 +1,65 @@
 @startuml
-title TARS attuale - Class Diagram e moduli JavaScript
+title TARS originale - Dipendenze LLM prima di CR1
 left to right direction
-skinparam shadowing false
+skinparam linetype ortho
 skinparam classAttributeIconSize 0
 hide empty members
+hide circle
+skinparam shadowing false
+skinparam backgroundColor #FFFFFF
+skinparam defaultFontName Arial
+skinparam defaultFontSize 13
+skinparam ArrowColor #526477
+skinparam NoteBackgroundColor #F5F7FA
+skinparam NoteBorderColor #CCD5DF
+skinparam componentBackgroundColor #EDF2F7
+skinparam componentBorderColor #526477
+skinparam classBackgroundColor #EDF2F7
+skinparam classBorderColor #526477
+skinparam participantBackgroundColor #EDF2F7
+skinparam participantBorderColor #526477
 
-class "extension.js" as Extension <<module>> {
-  activate(context)
-  deactivate()
-}
-class "explainCodeCommand.js" as Explain <<module>> {
-  explainCodeCommand(context)
-}
-class "configureTarsCommand.js" as Config <<module>> {
+class "configureTarsCommand.js" as clsConfig <<module>> {
   configureTars(context)
-  viewPanel()
-  getSavedConfig(context)
-  flushConfiguration(context)
-  showConfig(context)
 }
-class "tomCommand.js" as ToM <<module>> {
-  runTomQuiz(context)
-  getQuizHtml(webview, context)
-  saveAnswer(context, answer, question)
-  getSavedAnswers(context)
-  flushUserMind(context)
-  showUserMentalState(context)
+class "explainCodeCommand" as clsExplain <<function>> {
+  (context)
 }
-class "agent.js" as AgentModule <<module>> {
-  agent : StateGraph
-  planner(state)
-  syntaxCheckNode(state)
-  critiqueNode(state)
-  isSyntaxOK(state)
-  isCritiqueOK(state)
-}
-class "agentState" as State <<Annotation.Root>> {
-  document
-  inputCode
-  userProfile
-  importedConstructs
-  documentationContext
-  outputString
-  outputStructure
-  syntaxCheckMessage
-  critique
+class "agentState" as clsState <<Annotation.Root>> {
   modelName
   llmType
-  maxAttempts
-  currentAttemptNumber
   llmAPI
 }
-class LLMType {
-  {static} OPENAI = "OpenAIModel"
-  {static} HUGGINGFACE = "HuggingFaceModel"
-  {static} OLLAMA = "OllamaModel"
-  {static} DEEPSEEK = "DeepSeek"
+class "planner" as clsPlanner <<function>> {
+  (state)
 }
-class LLMFactory <<object literal>> {
+class "critiqueNode" as clsCritique <<function>> #F2F2F2 {
+  (state)
+}
+class "LLMFactory" as clsFactory <<object literal>> {
   createLLM(llmType, modelName, apiKey)
 }
-class "llmFactory.js" as FactoryModule <<module>> {
-  initializeOllamaModel(modelName)
-}
-class "agentUtils.js" as Utils <<module>> {
-  PLANNING_SYSTEM_PROMPT
-  CRITIQUE_SYSTEM_PROMPT
-  doubleBraces(input)
-  cleanLLMAnswer(LLMAnswer, programmingLanguage)
-  formatTemplate(template, values)
-  extractUsedConstructs(inputCode, importedConstructs)
-}
-class "StateGraph" as Graph <<library>> {
-  addNode(name, action)
-  addEdge(source, target)
-  compile()
-}
-class "ChatOpenAI" as Chat <<library>> {
-  withStructuredOutput(schema, config)
-  invoke(input)
-}
-class "ChatPromptTemplate" as Prompt <<library>> {
-  {static} fromMessages(messages)
-  pipe(llm)
-}
-class "SimpleChatModel" as Simple <<library>>
-class MyCustomChatModel {
-  model
-  constructor(fields)
-  _llmType()
-  _call(messages, options, runManager)
-}
-class "myCustomChatModel.js" as CustomModule <<module>> {
-  loadHuggingFace()
-}
-class "ChatOllama" as ChatOllama <<library>>
-class "ExtensionContext" as Context <<VS Code>> {
-  globalState
-  subscriptions
-}
-class "constructsRetriever.js" as Constructs <<module>> {
-  findConstructs(document)
-  extractImportedConstructs(document)
-}
-class "extensionUtils.js" as UI <<module>> {
-  extensionState
-  normalizeOutputStructure(outputStructure)
-  decorateExplanation(editor, document, element, elementIndex, matchText)
-}
-class "cache.js" as Cache <<module>> {
-  explanationCache : Map
-  getCachedExplanation(sourceCode)
-  storeExplanation(sourceCode, elementList)
-  loadCacheFromDisk()
-  saveCacheToDisk()
-}
-class "indexProjectDocumentsCommand.js" as Index <<module>> {
-  indexProjectCommand(context)
-}
-class "vectorRetriever.js" as Retrieve <<module>> {
-  retrieve(query)
-}
-class "vectorStore.js" as Store <<module>> {
-  vectorStore : MemoryVectorStore
-  retriever
-  addDocuments(documents)
-  retrieveDocuments(query)
-  flushDB()
-}
-class "MemoryVectorStore" as Memory <<library>> {
-  addDocuments(documents)
-  similaritySearchVectorWithScore(vector, k)
-  asRetriever(options)
-}
-class "OllamaEmbeddings" as Embeddings <<library>> {
-  embedQuery(query)
-  embedDocuments(documents)
+class "ChatOpenAI" as clsChat <<library>> {
+  withStructuredOutput(schema, options)
 }
 
-Extension ..> Explain
-Extension ..> Config
-Extension ..> ToM
-Extension ..> Index
-Extension ..> Context
-Explain ..> Context : legge globalState
-Config ..> Context : salva tarsConfiguration
-ToM ..> Context : salva userMind
-Explain ..> Config
-Explain ..> ToM
-Explain ..> Constructs
-Explain ..> UI
-Explain ..> Cache
-Explain ..> Retrieve
-Explain ..> AgentModule : agent.compile() / invoke()
-Explain ..> LLMType
-AgentModule --> Graph : agent e istanza di
-AgentModule ..> State
-AgentModule ..> Utils
-AgentModule ..> Prompt
-AgentModule ..> Chat : planner(): crea direttamente
-AgentModule ..> LLMFactory : solo critiqueNode() scollegato
-LLMFactory ..> LLMType
-LLMFactory ..> Chat : crea per OPENAI / DEEPSEEK
-FactoryModule --> LLMFactory : esporta
-FactoryModule ..> ChatOllama : initializeOllamaModel() non chiamata
-Simple <|-- MyCustomChatModel
-CustomModule --> MyCustomChatModel : definisce / esporta
-MyCustomChatModel ..> CustomModule : loadHuggingFace()
-Index ..> Store
-Retrieve ..> Store
-Store --> Memory : vectorStore e istanza di
-Store ..> Embeddings : embeddings.embedQuery()
-Memory --> Embeddings : istanza embeddings passata al costruttore
+clsExplain ..> clsConfig
+clsExplain ..> clsState
+clsPlanner ..> clsState
+clsPlanner ..> clsChat
+clsCritique ..> clsFactory
+clsFactory ..> clsChat
 
-note bottom of AgentModule
-  planner e una funzione, NON una classe Planner.
-  agent e un oggetto StateGraph, NON una classe Agent.
-  Nodi registrati: plannerNode, syntaxCheck.
-  critiqueNode e condizioni non collegati.
+note bottom of clsConfig
+  globalState: tarsConfiguration
+  {llmName, llmType: "openai", apiKey}
 end note
-note bottom of Config
-  tarsConfiguration = {llmName, llmType: "openai", apiKey}
-  Explain confronta invece llmType con "api":
-  il valore salvato viene mappato a LLMType.OLLAMA.
-  Il planner attuale ignora llmType.
-end note
-note bottom of CustomModule
-  Modulo non importato dal flusso attivo.
-  loadHuggingFace() usa HfInference e HF_TOKEN.
-end note
-note bottom of Store
-  retriever = asRetriever({k: 2}) e creato ma non usato.
-  retrieveDocuments() usa direttamente la similarita con k = 3.
-  embeddings e definito in src/vectorDB/embeddingsModel.js.
+note bottom of clsCritique
+  Funzione definita ma nodo non registrato.
 end note
 legend bottom
-  <<module>> e <<object literal>> distinguono moduli e oggetti dalle classi reali.
-  Le operazioni riprendono i nomi del codice; async omesso per leggibilita.
-  Le dipendenze statiche includono codice scollegato, segnalato nelle etichette.
-  Metodi delle librerie: solo quelli utili alla vista architetturale.
+  I riquadri <<function>>, <<module>> e <<object literal>>
+  NON rappresentano classi JavaScript.
+  agentState mostra solo i campi LLM essenziali.
 endlegend
 @enduml

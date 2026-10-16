@@ -1,172 +1,52 @@
 @startuml
-title TARS attuale - Generazione delle spiegazioni
-autonumber
+title TARS originale - Generazione di una spiegazione
 hide footbox
+autonumber
 skinparam shadowing false
-actor Utente
-participant "VS Code\ncommands / window / editor" as VS
-participant "extension.js" as Ext
-participant "explainCodeCommand.js" as Explain
-participant "configureTarsCommand.js" as Config
-participant "tomCommand.js" as ToM
-database "context.globalState" as Global
-participant "constructsRetriever.js" as Constructs
-participant "vectorRetriever.js" as Retrieve
-participant "vectorStore.js" as Store
-participant "vectorStore\n: MemoryVectorStore" as Memory
-participant "embeddings\n: OllamaEmbeddings" as Embeddings
-participant "Ollama\nlocalhost:11434" as Ollama
-participant "cache.js" as Cache
-participant "agent / agentInstance\nStateGraph / grafo compilato" as Graph
-participant "planner(state)\nagent.js" as Planner
-participant "ChatPromptTemplate\nprompt / chain" as Prompt
-participant "ChatOpenAI\nllm / runnable strutturato" as Chat
-participant "OpenAI API" as OpenAI
-participant "syntaxCheckNode(state)\nagent.js" as Syntax
-participant "extensionUtils.js" as UI
+skinparam backgroundColor #FFFFFF
+skinparam defaultFontName Arial
+skinparam defaultFontSize 13
+skinparam ArrowColor #526477
+skinparam NoteBackgroundColor #F5F7FA
+skinparam NoteBorderColor #CCD5DF
+skinparam componentBackgroundColor #EDF2F7
+skinparam componentBorderColor #526477
+skinparam classBackgroundColor #EDF2F7
+skinparam classBorderColor #526477
+skinparam participantBackgroundColor #EDF2F7
+skinparam participantBorderColor #526477
 
-note over Ext,Global
-  VS Code ha gia eseguito activate(context) e registrato i comandi.
-  Percorso principale: editor attivo, configurazione e profilo salvati.
+participant "VS Code" as seqVS
+participant "explainCodeCommand" as seqCommand
+participant "globalState" as seqState
+participant "RAG" as seqRag
+participant "agent / planner" as seqAgent
+participant "ChatOpenAI" as seqChat
+participant "OpenAI API" as seqAPI
+
+note over seqVS,seqState
+  Editor attivo; configurazione e profilo gia salvati.
+  Percorso riuscito, senza risultato in cache.
 end note
-Utente -> VS : tars.explain-code
-VS -> Ext : callback registrata
-Ext -> Explain : await explainCodeCommand(context)
-Explain -> VS : window.activeTextEditor
-VS --> Explain : editor / document
-break editor assente
-  Explain --> Ext : return
-  Ext -> VS : showInformationMessage("Task Completed!")
+seqVS -> seqCommand : tars.explain-code
+seqCommand -> seqState : get(tarsConfiguration), get(userMind)
+seqState --> seqCommand : modello, chiave, profilo
+seqCommand -> seqCommand : estrae codice e import
+loop per ogni target
+  seqCommand -> seqRag : retrieve(construct.name)
+  seqRag --> seqCommand : documentazione
+  seqCommand -> seqAgent : invoke(state)
+  seqAgent -> seqChat : new / withStructuredOutput()
+  seqAgent -> seqChat : chain.invoke()
+  seqChat -> seqAPI : richiesta
+  seqAPI --> seqChat : risposta
+  seqChat --> seqAgent : results: [{text, description}]
+  seqAgent -> seqAgent : syntaxCheckNode(state)
+  seqAgent --> seqCommand : outputStructure
+  seqCommand -> seqVS : decorateExplanation()
 end
-Explain -> Graph : agent.compile()
-Graph --> Explain : agentInstance
-Explain -> Explain : extensionState.decorations = []
-Explain -> VS : toggleDecorations(context)\ntramite toggleDecorationsCommand.js
-Explain -> Global : get("tarsConfiguration")
-Global --> Explain : config
-opt config assente
-  Explain -> Config : await configureTars(context)
-  Config -> VS : createWebviewPanel() / onDidReceiveMessage()
-  Config --> Explain : ritorno senza attesa del salvataggio
-  Explain -> Global : get("tarsConfiguration")
-  Global --> Explain : configurazione corrente
-  note over Explain,Global
-    Il callback modelConfig salva successivamente in globalState.
-    Nessuna sincronizzazione con Save: config puo restare undefined.
-    La prosecuzione seguente assume config disponibile.
-  end note
-end
-Explain -> Global : get("userMind")
-Global --> Explain : userMind
-opt userMind assente
-  Explain -> ToM : await runTomQuiz(context)
-  ToM -> Global : getSavedAnswers(context)
-  ToM -> VS : createWebviewPanel() / onDidReceiveMessage()
-  ToM --> Explain : ritorno senza attesa del quiz
-  Explain -> Global : get("userMind")
-  Global --> Explain : profilo corrente
-  note over Explain,Global
-    Il callback saveConfig usa saveAnswer() per salvare le risposte.
-    Nessuna attesa del completamento del quiz.
-    La prosecuzione assume userMind disponibile.
-  end note
-end
-Explain -> Explain : costruisce userMindString
-Explain -> Constructs : await findConstructs(document)
-Constructs -> VS : executeCommand("vscode.executeDocumentSymbolProvider", uri)
-VS --> Constructs : simboli
-Constructs --> Explain : constructs
-Explain -> Explain : targets = selezione, costrutti oppure intero file
-Explain -> Constructs : await extractImportedConstructs(document)
-Constructs -> VS : workspace.findFiles() / openTextDocument()\nsimboli dei file importati
-VS --> Constructs : costrutti importati
-Constructs --> Explain : importedConstructs
-
-loop per ogni construct in targets, in sequenza
-  Explain -> Retrieve : await retrieve(construct.name)
-  Retrieve -> Store : await retrieveDocuments(query)
-  Store -> Embeddings : await embedQuery(query)
-  Embeddings -> Ollama : richiesta embedding
-  Ollama --> Embeddings : vettore
-  Embeddings --> Store : vettore
-  Store -> Memory : similaritySearchVectorWithScore(vettore, 3)
-  Memory --> Store : coppie [documento, score]
-  Store --> Retrieve : documenti con score
-  Retrieve --> Explain : documenti; [] se si verifica un errore
-  Explain -> Explain : concatena pageContent in contentString
-  Explain -> Cache : getCachedExplanation(sourceCode + userMindString)
-  Cache --> Explain : cached oppure undefined
-  alt cache presente
-    Explain -> UI : normalizeOutputStructure(cached)
-    UI --> Explain : outputList
-  else cache assente
-    Explain -> Graph : await agentInstance.invoke(state)
-    note right of Graph
-      state: modelName, inputCode, llmType, maxAttempts: 3,
-      userProfile, llmAPI, importedConstructs, documentationContext.
-      llmType = config.llmType === "api" ? OPENAI : OLLAMA.
-      Il planner ignora llmType.
-    end note
-    Graph -> Planner : planner(state) [nodo plannerNode]
-    Planner -> Chat : new ChatOpenAI({apiKey, model, temperature: 0,\nmaxTokens: 10000, maxRetries: 5})
-    Planner -> Chat : withStructuredOutput(schema, {strict: true})
-    Chat --> Planner : runnable strutturato
-    Planner -> Planner : extractUsedConstructs() / doubleBraces()\nprofilo + codice + import + documentazione
-    Planner -> Prompt : ChatPromptTemplate.fromMessages(messages)
-    Planner -> Prompt : prompt.pipe(llm)
-    Prompt --> Planner : chain
-    Planner -> Prompt : await chain.invoke()
-    Prompt -> Chat : invocazione modello
-    Chat -> OpenAI : richiesta con vincoli di output strutturato
-    OpenAI --> Chat : risposta
-    Chat --> Prompt : {results: [{text, description}]}
-    Prompt --> Planner : risposta strutturata
-    note over Planner,OpenAI
-      Nessun baseURL personalizzato.
-      Il metodo structured output non e specificato nel sorgente.
-      LLMFactory NON partecipa a questa sequenza.
-    end note
-    Planner -> Planner : trimStart(text) / JSON.stringify(results)
-    Planner --> Graph : {inputCode, outputString, currentAttemptNumber}
-    Graph -> Syntax : syntaxCheckNode(state) [nodo syntaxCheck]
-    Syntax -> Syntax : JSON.parse(outputString) / trimStart(text)
-    Syntax --> Graph : outputStructure + syntaxCheckMessage\noppure messaggio di errore JSON
-    Graph --> Explain : agentResponse
-    note over Graph,Syntax
-      Non sono collegati critica, retry condizionali o arco END esplicito.
-      Un errore di parsing non attiva un nuovo tentativo.
-    end note
-    Explain -> UI : normalizeOutputStructure(agentResponse.outputStructure)
-    UI --> Explain : outputList
-    Explain -> Cache : storeExplanation(sourceCode + userMindString, outputList)
-    Cache -> Cache : aggiorna Map / saveCacheToDisk()
-    note right of Cache
-      Persistenza in explanationCache.json.
-      Chiave senza modello o contesto RAG.
-    end note
-  end
-  loop per ogni element in outputList
-    Explain -> Explain : confronta text con codice normalizzato
-    alt frammento trovato
-      Explain -> Explain : "No exp" diventa spazi
-      Explain -> UI : decorateExplanation(editor, document, element, elementIndex, matchText)
-      UI -> VS : createTextEditorDecorationType() / editor.setDecorations()
-      UI --> Explain : decorazioni
-      Explain -> Explain : aggiorna extensionState
-    else frammento non trovato
-      Explain -> VS : showInformationMessage("No match found...")
-    end
-  end
-end
-Explain --> Ext : completamento
-Ext -> VS : showInformationMessage("Task Completed!")
-
 legend bottom
-  Indicizzazione separata, precedente al retrieval:
-  indexProjectCommand() -> DirectoryLoader/PDFLoader -> RecursiveCharacterTextSplitter
-  -> addDocuments() -> MemoryVectorStore -> OllamaEmbeddings -> Ollama.
-  Il diagramma espande il percorso riuscito del modello; se invoke() fallisce,
-  planner mostra un errore e rilancia. Explain registra l'errore ma accede comunque
-  ad agentResponse.outputStructure: puo verificarsi un ulteriore errore.
+  agent e il grafo compilato; planner() e il suo nodo generativo.
+  Prompt, cache e decorazioni sono sintetizzati; nessun ciclo di critica attivo.
 endlegend
 @enduml
