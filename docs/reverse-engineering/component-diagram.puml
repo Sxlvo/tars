@@ -1,0 +1,96 @@
+@startuml
+title TARS attuale - Component Diagram
+left to right direction
+skinparam componentStyle uml2
+skinparam shadowing false
+
+component "VS Code\ncommands / window / workspace\nExtensionContext.globalState" as VS
+cloud "OpenAI API\nendpoint predefinito del client" as OpenAI
+node "Ollama\nlocalhost:11434" as Ollama
+artifact "PDF del workspace" as PDF
+artifact "explanationCache.json" as DiskCache
+
+package "TARS - Extension Host" {
+  component "extension.js\nactivate(context)" as Extension
+  component "explainCodeCommand.js\nexplainCodeCommand(context)" as Explain
+  component "configureTarsCommand.js\nconfigureTars(context)" as Config
+  component "tomCommand.js\nrunTomQuiz(context)" as ToM
+  component "constructsRetriever.js\nfindConstructs(document)\nextractImportedConstructs(document)" as Constructs
+  component "cache.js\ngetCachedExplanation()\nstoreExplanation()" as Cache
+  component "extensionUtils.js\nnormalizeOutputStructure()\ndecorateExplanation()" as UI
+  component "toggleDecorationsCommand.js\ntoggleDecorations(context)" as Toggle
+  package "Agent" {
+    component "agent.js\nagent : StateGraph\nplanner(state)\nsyntaxCheckNode(state)" as Agent
+    component "agentState.js\nagentState / LLMType" as State
+    component "agentUtils.js\nPLANNING_SYSTEM_PROMPT\nextractUsedConstructs() / doubleBraces()" as Prompts
+    component "agent.js\ncritiqueNode(state)\nisSyntaxOK(state) / isCritiqueOK(state)" as Inactive #EEEEEE
+    component "llmFactory.js\nLLMFactory.createLLM()" as Factory #EEEEEE
+  }
+  component "ChatOpenAI\n@langchain/openai" as Chat
+  package "RAG" {
+    component "indexProjectDocumentsCommand.js\nindexProjectCommand(context)\nDirectoryLoader / PDFLoader\nRecursiveCharacterTextSplitter" as Index
+    component "vectorRetriever.js\nretrieve(query)" as Retrieve
+    component "vectorStore.js\naddDocuments()\nretrieveDocuments() / flushDB()" as Store
+    component "vectorStore : MemoryVectorStore" as Memory
+    component "embeddingsModel.js\nembeddings : OllamaEmbeddings" as Embeddings
+  }
+}
+
+VS --> Extension : attivazione / comandi
+Extension --> Explain
+Extension --> Config
+Extension --> ToM
+Extension --> Index
+Extension --> Retrieve : tars.retrieve
+Extension --> Store : tars.flushDB
+Extension --> Toggle
+Explain --> VS : editor / globalState / messaggi
+Explain --> Config : se configurazione assente
+Explain --> ToM : se profilo assente
+Config --> VS : webview / tarsConfiguration
+ToM --> VS : webview / userMind
+Explain --> Constructs
+Constructs --> VS : simboli / file del workspace
+Explain --> Retrieve : per ogni target, prima della cache
+Explain --> Cache
+Cache --> DiskCache : lettura / scrittura locale
+Explain --> Agent : compile() / invoke(state)
+Explain --> UI
+Explain --> Toggle
+UI --> VS : decorazioni
+Toggle --> VS : visibilita decorazioni
+Agent --> State
+Agent --> Prompts
+Agent --> Chat : planner: new ChatOpenAI()\nwithStructuredOutput(schema, {strict: true})
+Chat --> OpenAI : generazione remota
+Inactive ..> Factory : chiamata presente in critiqueNode()
+Factory ..> Chat : casi OPENAI / DEEPSEEK
+Index --> PDF : caricamento e chunking
+Index --> Store : addDocuments(cleanedDocs)
+Retrieve --> Store : retrieveDocuments(query)
+Store --> Memory : indicizzazione / similarita top 3
+Store --> Embeddings : embedQuery(query)
+Memory --> Embeddings : embedDocuments() durante addDocuments()
+Embeddings --> Ollama : mxbai-embed-large:335m-v1-fp16
+
+note bottom of Agent
+  Grafo collegato: START -> plannerNode -> syntaxCheck.
+  Nessun arco condizionale attivo o arco END esplicito.
+  Il planner NON usa LLMFactory.
+end note
+note bottom of Factory
+  Il chiamante critiqueNode non e registrato nel grafo.
+  Caso OLLAMA commentato; HUGGINGFACE non gestito.
+  DEEPSEEK usa ChatOpenAI senza endpoint dedicato.
+end note
+note bottom of Memory
+  Archivio volatile in memoria.
+  Chroma e solo codice commentato.
+end note
+legend bottom
+  Freccia continua: dipendenza del percorso collegato.
+  Freccia tratteggiata e grigio: codice presente ma scollegato dal flusso spiegazioni.
+  Le scatole identificano moduli/componenti, non necessariamente classi.
+  MyCustomChatModel e initializeOllamaModel: dettagli nel Class Diagram.
+endlegend
+@enduml
