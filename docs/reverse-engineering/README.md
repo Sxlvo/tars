@@ -1,68 +1,65 @@
-# Reverse engineering dell'architettura attuale di TARS
+# Architettura originale di TARS
 
-I tre diagrammi descrivono il sorgente attuale, prima di CR1 e CR2. Non propongono modifiche. Installazione, compilazione, avvio in VS Code e apertura di Configure TARS sono stati verificati dall'utente; questa documentazione deriva dall'analisi statica del codice. Il bundle `dist/extension.js`, gia modificato prima di questa attivita, non e stato alterato.
+Le tre viste rappresentano il codice attuale, prima di CR1 e CR2. Sono selettive: mostrano le responsabilita principali senza riprodurre ogni funzione o chiamata. I nomi abbreviati dei componenti sono associati ai sorgenti nella tabella seguente. Nessuna classe applicativa e stata inventata.
 
 ## Component Diagram
 
-File: [component-diagram.puml](component-diagram.puml).
+[component-diagram.puml](component-diagram.puml) contiene **otto componenti**. VS Code esegue i comandi registrati in `extension.js`; Commands raggruppa attivazione e comandi. Il comando di spiegazione usa configurazione, ToM, RAG e agente. Il planner crea direttamente `ChatOpenAI`. La dipendenza verso `LLMFactory` e tratteggiata perche appartiene a `critiqueNode()`, definita ma non collegata al grafo. La factory crea anch'essa `ChatOpenAI`.
 
-Mostra i moduli dell'estensione e le dipendenze da VS Code, OpenAI e Ollama. `explainCodeCommand()` coordina estrazione del codice, profilo ToM, retrieval, cache, agente e decorazioni. Il planner costruisce direttamente `ChatOpenAI`; `LLMFactory` e raggiunta soltanto da `critiqueNode()`, funzione non registrata nel grafo. Il RAG usa embeddings Ollama e `MemoryVectorStore`: Chroma non e attivo. Il grigio e le frecce tratteggiate distinguono il codice scollegato dal percorso operativo.
+Sono omessi cache, librerie interne, servizi esterni e collegamenti delle webview verso VS Code. Configurazione e ToM salvano rispettivamente `tarsConfiguration` e `userMind` in `context.globalState`; il comando legge questi dati e li passa all'agente. RAG usa `MemoryVectorStore` e `OllamaEmbeddings` locale, non Chroma.
 
 ## Class Diagram
 
-File: [class-diagram.puml](class-diagram.puml).
+[class-diagram.puml](class-diagram.puml) concentra la vista sulle dipendenze interessate da CR1. Gli stereotipi distinguono funzioni, modulo, oggetto letterale, struttura `Annotation.Root` e classe di libreria. `planner()` e `critiqueNode()` sono funzioni di `agent.js`, non classi; `LLMFactory` e un oggetto letterale. `agentState` mostra solo i tre campi relativi al modello.
 
-Il progetto e principalmente procedurale: per non inventare classi, il diagramma distingue i moduli JavaScript (`<<module>>`), l'oggetto letterale `LLMFactory`, lo schema `agentState` e le classi reali, incluse quelle delle librerie. `planner()` e una funzione di `agent.js`; `agent` e un'istanza `StateGraph`. Le classi applicative rappresentate sono `LLMType` e `MyCustomChatModel`; quest'ultima estende `SimpleChatModel` ma non e collegata alla generazione attiva. Le operazioni delle librerie sono selezionate per spiegare le dipendenze e non rappresentano API complete.
+Il comando prepara lo stato passato a `agentInstance.invoke()`; il planner ne legge i parametri e costruisce direttamente `ChatOpenAI`, applicando lo schema strutturato. Soltanto `critiqueNode()` chiama la factory. Il diagramma non aggiunge una dipendenza dal planner alla factory. La configurazione arriva al comando attraverso `globalState`, non attraverso una chiamata dal planner al modulo di configurazione.
 
 ## Sequence Diagram
 
-File: [sequence-diagram.puml](sequence-diagram.puml).
+[sequence-diagram.puml](sequence-diagram.puml) usa **sette partecipanti** e mostra il percorso riuscito con editor attivo, configurazione e profilo gia salvati e cache assente. Per ogni target, il comando recupera la documentazione, invoca il grafo e visualizza la spiegazione. Il partecipante `agent / planner` riassume il grafo compilato e le funzioni interne di `agent.js`; `chain.invoke()` indica la catena prompt-modello che invoca `ChatOpenAI`. Il messaggio finale a VS Code sintetizza la chiamata a `decorateExplanation()` e le successive API di decorazione.
 
-Descrive il comando `tars.explain-code`: lettura della configurazione e del profilo, estrazione dei costrutti, retrieval prima della cache, generazione strutturata, parsing e decorazioni. L'indicizzazione PDF e un comando separato ed e riassunta nella legenda. I rami relativi a configurazione e quiz mancanti mostrano l'apertura delle webview senza inventare un'attesa del salvataggio: il codice attuale non la implementa. Il percorso successivo assume dati disponibili. Il caso principale di generazione e quello riuscito; il comportamento di errore dell'invocazione e descritto nella legenda.
+Sono omessi apertura delle webview, gestione errori, cache, compilazione del grafo, dettagli del prompt e indicizzazione PDF. La cache viene controllata dopo il retrieval; se presente, evita la generazione LLM. Non e rappresentato alcun ciclo di self-refinement, perche non e attivo.
 
-## Osservazioni necessarie per leggere correttamente i diagrammi
+## Precisazioni sul codice originale
 
-- Il grafo collega soltanto `START -> plannerNode -> syntaxCheck`. La registrazione di `critiqueNode` e gli archi condizionali sono commentati. Non viene dichiarato un arco finale esplicito verso `END`; i diagrammi non ne aggiungono uno e non costituiscono una verifica runtime del grafo.
-- La configurazione salva `llmType: "openai"`, mentre `explainCodeCommand()` confronta il valore con `"api"`. Il valore salvato viene quindi mappato a `LLMType.OLLAMA`, ma il planner ignora il tipo e crea comunque `ChatOpenAI`.
-- Il planner usa `withStructuredOutput(schema, {strict: true})`, senza indicare il metodo. La risposta attesa e `{results: [{text, description}]}`; il planner serializza l'array e `syntaxCheckNode()` lo riparsa. Non e rappresentato un protocollo specifico di function calling, perche non e selezionato esplicitamente nel sorgente.
-- `LLMFactory.createLLM()` gestisce `OPENAI` e `DEEPSEEK`, entrambi con `ChatOpenAI` e senza endpoint personalizzato. Il caso `OLLAMA` e commentato; `initializeOllamaModel()` e definita ma non chiamata. `HUGGINGFACE` non ha un caso nella factory.
-- ToM raccoglie risposte in una webview e le salva in `globalState`: non effettua una chiamata LLM autonoma. Il profilo viene poi inserito nel prompt del planner.
-- Gli embeddings usano `mxbai-embed-large:335m-v1-fp16` su `http://localhost:11434`. Il vector store e volatile. Il retriever con `k: 2` viene creato ma non usato: la ricerca effettiva usa `similaritySearchVectorWithScore(..., 3)`.
-- Il retrieval avviene anche in caso di cache presente. La cache considera codice e profilo, senza modello o documentazione. Nel fallback all'intero file il target non ha `name`: il retrieval puo fallire e restituire `[]`.
-- In caso di errore LLM il planner mostra un messaggio e rilancia; il comando registra l'errore ma poi legge comunque `agentResponse.outputStructure`. Non e implementato un recupero affidabile da questo errore.
-- `src/config/extensionConfig.js` e vuoto. Le impostazioni effettive sono in `configureTarsCommand.js` e `context.globalState`.
-- Sono omessi i comandi accessori di help e alcuni dettagli interni di parsing e rendering per mantenere le viste focalizzate sui componenti richiesti.
+- Il grafo registra `plannerNode` e `syntaxCheck`, collegati da `START -> plannerNode -> syntaxCheck`. Critica e archi condizionali sono commentati; non e dichiarato un arco finale esplicito verso `END`.
+- Il planner usa `withStructuredOutput(schema, {strict: true})` senza selezionare esplicitamente il metodo. L'oggetto atteso contiene `results`, array di coppie `text` e `description`; il planner serializza l'array e `syntaxCheckNode()` esegue il parsing JSON.
+- La configurazione salva `llmType: "openai"`, ma il comando confronta il valore con `"api"`: lo stato riceve quindi `LLMType.OLLAMA`. Il planner attuale ignora tale campo e crea comunque `ChatOpenAI`.
+- La factory gestisce `OPENAI` e `DEEPSEEK` con `ChatOpenAI`, senza endpoint personalizzato. Il caso `OLLAMA` e commentato. La funzione `initializeOllamaModel()` non e chiamata dal percorso attivo; `MyCustomChatModel` per Hugging Face e anch'essa scollegata e omessa dalla vista CR1.
+- ToM e un questionario locale, senza una propria chiamata LLM. Il profilo viene incluso nel prompt del planner.
+- Il RAG indicizza PDF con un comando separato. Usa embeddings `mxbai-embed-large:335m-v1-fp16` su `http://localhost:11434` e un archivio volatile in memoria; la ricerca effettiva restituisce fino a tre risultati.
 
-## Tracciabilita verso i sorgenti
+## Tracciabilita
 
-Radice analizzata: `/Users/salvolepore/Projects/tars`.
+Radice del progetto: `/Users/salvolepore/Projects/tars`.
 
-| Area | Percorsi rispetto alla radice |
+| Elemento | Sorgenti rispetto alla radice |
 | --- | --- |
-| Attivazione e manifest | `extension.js`, `package.json` |
-| Orchestrazione del comando | `src/commands/explainCodeCommand.js` |
-| Agente, planner e critica | `src/agent/agent.js` |
-| Stato e tipi | `src/agent/agentState.js` |
-| Factory e inizializzazione Ollama scollegata | `src/agent/llmFactory.js` |
-| Prompt e utilita | `src/agent/agentUtils.js` |
-| Adapter Hugging Face scollegato | `src/agent/myCustomChatModel.js` |
-| Configurazione | `src/commands/configureTarsCommand.js`, `src/config/extensionConfig.js` |
+| VS Code / Commands | `extension.js`, `src/commands/explainCodeCommand.js` |
+| Configurazione LLM | `src/commands/configureTarsCommand.js` |
 | Theory of Mind | `src/commands/tomCommand.js` |
-| Estrazione del codice | `src/utils/constructsRetriever.js` |
-| Decorazioni | `src/utils/extensionUtils.js`, `src/commands/toggleDecorationsCommand.js` |
-| Cache | `src/utils/cache.js` |
-| Indicizzazione PDF | `src/commands/indexProjectDocumentsCommand.js` |
-| Retrieval e archivio vettoriale | `src/vectorDB/vectorRetriever.js`, `src/vectorDB/vectorStore.js` |
-| Embeddings | `src/vectorDB/embeddingsModel.js` |
+| Agent / Planner / critica | `src/agent/agent.js` |
+| Stato e tipi LLM | `src/agent/agentState.js` |
+| LLMFactory | `src/agent/llmFactory.js` |
+| ChatOpenAI | Libreria `@langchain/openai`, importata da agente e factory |
+| RAG | `src/vectorDB/vectorRetriever.js`, `src/vectorDB/vectorStore.js`, `src/vectorDB/embeddingsModel.js`, `src/commands/indexProjectDocumentsCommand.js` |
+| Estrazione e visualizzazione sintetizzate | `src/utils/constructsRetriever.js`, `src/utils/extensionUtils.js` |
+| Cache omessa dalle viste | `src/utils/cache.js` |
 
-## Visualizzazione
+## Impaginazione e verifica
 
-Aprire i file `.puml` con un visualizzatore PlantUML. Con PlantUML e le dipendenze di rendering gia installati, dalla radice del repository:
+Colori sobri, nomi brevi e identificatori univoci. Le viste statiche usano orientamento da sinistra a destra e collegamenti ortogonali; la sequenza usa l'ordine temporale verticale UML. Le viste sono pensate per essere inserite singolarmente in una pagina A4 orizzontale, preferibilmente esportate in SVG e scalate mantenendo le proporzioni.
+
+Verifica locale con PlantUML 1.2026.2:
 
 ```bash
-plantuml -tsvg docs/reverse-engineering/component-diagram.puml
-plantuml -tsvg docs/reverse-engineering/class-diagram.puml
-plantuml -tsvg docs/reverse-engineering/sequence-diagram.puml
+java -jar /private/tmp/tars-plantuml-1.2026.2.jar -checkonly docs/reverse-engineering/*.puml
 ```
 
-I comandi generano SVG accanto ai sorgenti PlantUML. Il rendering non e stato eseguito durante questa attivita: non e stato trovato un eseguibile PlantUML locale. Non sono stati installati strumenti o inviate informazioni del progetto a servizi di rendering esterni.
+Per esportare con un'installazione PlantUML disponibile:
+
+```bash
+plantuml -tsvg docs/reverse-engineering/*.puml
+```
+
+La verifica e il rendering di controllo vengono eseguiti localmente, senza inviare i diagrammi a servizi esterni. Gli output di controllo sono temporanei; i file versionabili restano i tre `.puml` e questo README. Il codice applicativo non viene modificato.
