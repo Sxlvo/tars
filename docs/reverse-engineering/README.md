@@ -31,7 +31,7 @@ Sono omessi apertura delle webview, gestione errori, cache, compilazione del gra
 
 ## Tracciabilita
 
-Radice del progetto: `/Users/salvolepore/Projects/tars`.
+Repository root: Sxlvo/tars
 
 | Elemento | Sorgenti rispetto alla radice |
 | --- | --- |
